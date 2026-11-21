@@ -16,6 +16,7 @@ stringData:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
+  # Backed by minikube default provisioner
   name: postgres-data
   namespace: object-storage
 spec:

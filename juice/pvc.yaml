@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: shared-model-storage
+  namespace: object-storage
+spec:
+  accessModes:
+    # Multiple pods can mount it for read-write
+    - ReadWriteMany
+  # Make the storage class explicit as this volume
+  # will NOT be backed by minikube default provisioner
+  storageClassName: juicefs-rustfs
+  resources:
+    requests:
+      storage: 2Gi

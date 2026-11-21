@@ -1,0 +1,40 @@
+# This pod tests the JuiceFS mount
+apiVersion: v1
+kind: Pod
+metadata:
+  name: juicefs-writer
+  namespace: object-storage
+spec:
+  containers:
+    - name: writer
+      image: python:3.12-slim
+      command: ["sh", "-c", "sleep infinity"]
+      volumeMounts:
+        - name: models
+          # Hypothetical path where the
+          # model can be stored
+          mountPath: /mnt/models
+  volumes:
+    - name: models
+      persistentVolumeClaim:
+        claimName: shared-model-storage
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: juicefs-reader
+  namespace: object-storage
+spec:
+  containers:
+    - name: reader
+      image: python:3.12-slim
+      command: ["sh", "-c", "sleep infinity"]
+      volumeMounts:
+        - name: models
+          # Hypothetical path where the
+          # models can be loaded from
+          mountPath: /mnt/models
+  volumes:
+    - name: models
+      persistentVolumeClaim:
+        claimName: shared-model-storage

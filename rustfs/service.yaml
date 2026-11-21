@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: rustfs
+  namespace: object-storage
+spec:
+  type: ClusterIP
+
+  selector:
+    app: rustfs
+
+  ports:
+    # Functional requirement of the S3 interface
+    # endpoint_url = "http://rustfs.object-storage.svc.cluster.local:9000"
+    - name: s3
+      port: 9000
+      targetPort: 9000
+    # GUI web-console runs here
+    # http://rustfs.object-storage.svc.cluster.local:9001
+    - name: console
+      port: 9001
+      targetPort: 9001

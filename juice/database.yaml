@@ -1,6 +1,7 @@
 # Important point regarding the postgres
 # JuiceFS will manage its own initialisation, no need for us
-# to supply any init script
+# to supply any init script as per its own documentation
+# https://cf.juicefs.com/docs/community/databases_for_metadata/
 apiVersion: v1
 kind: Secret
 metadata:

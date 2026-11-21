@@ -1,0 +1,58 @@
+# This formats the juiceFS drive.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: juicefs-format
+  namespace: object-storage
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: juicefs-format
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: juicefs-format
+          # Official Community Edition image tag
+          # for the formatting job. Documentation at
+          # https://s.juicefs.com/docs/csi/guide/custom-image/
+          image: juicedata/mount:ce-v1.3.1
+          imagePullPolicy: IfNotPresent
+          command:
+            - juicefs
+          args:
+            - format
+            - --storage=$(STORAGE)
+            - --bucket=$(BUCKET)
+            - --access-key=$(ACCESS_KEY)
+            - --secret-key=$(SECRET_KEY)
+            - $(META_URL)
+            - risk-model-storage
+          # Refer to the secret file
+          env:
+            - name: META_URL
+              valueFrom:
+                secretKeyRef:
+                  name: juicefs-secret
+                  key: metaurl
+            - name: STORAGE
+              valueFrom:
+                secretKeyRef:
+                  name: juicefs-secret
+                  key: storage
+            - name: BUCKET
+              valueFrom:
+                secretKeyRef:
+                  name: juicefs-secret
+                  key: bucket
+            - name: ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: juicefs-secret
+                  key: access-key
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: juicefs-secret
+                  key: secret-key

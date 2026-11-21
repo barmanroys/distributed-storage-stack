@@ -1,0 +1,115 @@
+# Important point regarding the postgres
+# JuiceFS will manage its own initialisation, no need for us
+# to supply any init script
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-secret
+  namespace: object-storage
+type: Opaque
+stringData:
+  POSTGRES_USER: juicefs
+  POSTGRES_PASSWORD: "juicefs-postgres-password"
+  POSTGRES_DB: juicefs
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-data
+  namespace: object-storage
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: object-storage
+  labels:
+    app: postgres
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      securityContext:
+        fsGroup: 70
+        fsGroupChangePolicy: OnRootMismatch
+      containers:
+        - name: postgres
+          # Latest as per Dockerhub
+          image: postgres:19-alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: postgres
+              containerPort: 5432
+              protocol: TCP
+          envFrom:
+            - secretRef:
+                name: postgres-secret
+          volumeMounts:
+            # Use this persistence volume to make
+            # the deployment stateful and able to recover
+            # from crashes
+            - name: postgres-data
+              mountPath: /var/lib/postgresql
+          startupProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - juicefs
+                - -d
+                - juicefs
+            failureThreshold: 30
+            periodSeconds: 5
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - juicefs
+                - -d
+                - juicefs
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - juicefs
+                - -d
+                - juicefs
+            periodSeconds: 20
+            timeoutSeconds: 5
+      volumes:
+        - name: postgres-data
+          persistentVolumeClaim:
+            claimName: postgres-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: object-storage
+spec:
+  type: ClusterIP
+  selector:
+    app: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+      protocol: TCP

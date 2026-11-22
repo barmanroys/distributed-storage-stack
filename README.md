@@ -23,14 +23,14 @@ flowchart TB
             R["Reader Pod"]
         end
         PVC["PVC: shared JuiceFS volume<br/>mounted at /mnt/models"]
-        CSI["JuiceFS CSI driver"]
+        CSI["CSI driver"]
         W --> PVC
         R --> PVC
         PVC --> CSI
     end
 
-    CSI --> JFS["JuiceFS filesystem"]
-    JFS --> PG[("PostgreSQL<br/>filesystem metadata")]
+    CSI --> JFS["Filesystem"]
+    JFS --> PG[("PostgreSQL<br/>metadata")]
     JFS --> S3[("RustFS bucket<br/>file data / objects")]
 ```
 
@@ -38,8 +38,8 @@ The responsibilities of different components
 
 -   **RustFS** stores the file data as objects in an S3-compatible
     bucket (far cheaper and ubiquitous than Posix based storage).
--   **PostgreSQL** stores JuiceFS filesystem metadata.
--   **JuiceFS** presents a filesystem abstraction over those two backends (RustFS+PostgreSQL).
+-   **PostgreSQL** manages JuiceFS filesystem metadata.
+-   **JuiceFS** exposes a Posix filesystem abstraction over those two (RustFS+PostgreSQL).
 -   **JuiceFS CSI** connects that filesystem to Kubernetes volumes.
 -   **The PVC** is what application Pods consume. They don't know about Juice, RustFS or PostgreSQL.
 
@@ -55,7 +55,7 @@ flowchart LR
     S -->|Load model artefacts| I[Inference Pods]
     I --> C[Downstream clients]
 ```
-However, the exact application purpose is deliberately not the focus of this PoC. TensorFlow training and inference are the motivating examples, not features being implemented here. The objective is to explore and validate the storage architecture underneath such a workflow: object storage, metadata storage, the JuiceFS filesystem, Kubernetes CSI integration, and shared filesystem access across multiple Pods.
+However, the exact application purpose is deliberately not the focus of this PoC. TensorFlow training and inference are the motivating examples, not features being implemented here. This tutorial explores and validates the storage architecture underneath such a workflow: object storage, metadata storage, the JuiceFS filesystem, Kubernetes CSI integration, and shared filesystem access across multiple Pods.
 
 The same architecture could support many other workloads that need to publish files in one Pod and consume them in another. The writer and reader are intentionally minimal so that the storage behaviour can be isolated, understood and verified independently of application-level complexity.
 
@@ -136,12 +136,12 @@ connection URL and RustFS endpoint, bucket name, and credentials.
 manifest or a secret-management mechanism appropriate to your
 environment.
 
-## Prerequisites
+## Technical Infrastructure
 
 What I used (and likely you will need something similar, minor version changes should not cause any issue)
 -   A PC running Ubuntu 26.04 
--   Docker version 29.10.0
--   Minikube version 1.39.0
+-   Docker 29.10.0
+-   Minikube1.39.0
 -   `kubectl` client 1.37.2
 -   Helm 4.3.2 
 -   A Kubernetes context pointing at the Minikube cluster
@@ -149,27 +149,23 @@ What I used (and likely you will need something similar, minor version changes s
 Start the cluster:
 
 ``` bash
-minikube start
-kubectl get nodes
+minikube delete && minikube start && kubectl get nodes # Delete first to start with a clean slate 
 ```
 
 Check the node architecture:
 
 ``` bash
-kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.nodeInfo.architecture}{"\n"}{end}'
+kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.nodeInfo.architecture}{"\n"}{end}' # Should report amd64 architecture 
 ```
-
-This walkthrough assumes the output reports `amd64`. If it reports
-something else, stop here and check that the images used by your
-manifests and the JuiceFS CSI components support that architecture.
+If the above command reports something else, stop here and check that the images used by your
+manifests and the JuiceFS CSI components support that architecture. If it is all good, you may fire up the dashboard by `minikube dashboard` for ease of pod management and log visualisation. 
 
 ## Step 1 --- Bring up the backends
 
-Apply the RustFS manifests and PostgreSQL manifest:
+Create the relevant namespace for this project and apply the manifests as per the following command. 
 
 ``` bash
-kubectl apply --filename rustfs/
-kubectl apply --filename juice/database.yaml
+kubectl create namespace object-storage && kubectl apply --filename rustfs/ && kubectl apply --filename juice/database.yaml # Start all rustfs related artefacts and the PgSQL 
 ```
 
 The walkthrough expects both services to live in the `object-storage`
@@ -179,8 +175,8 @@ commands below if your manifests use different names.
 Check that the Pods are ready before moving on:
 
 ``` bash
-kubectl get pods -n object-storage
-kubectl get services -n object-storage
+kubectl get pods --namespace object-storage
+kubectl get services --namespace object-storage
 ```
 
 Wait for the RustFS and PostgreSQL workloads to become ready. Applying a
@@ -192,39 +188,32 @@ mean the backing service is already accepting connections.
 In separate terminals, try to run the followings for easy to use local interfaces 
 
 ``` bash
-kubectl -n object-storage port-forward svc/rustfs 9001:9001 # RustFS Web Console 
+kubectl --namespace object-storage port-forward svc/rustfs 9001:9001 # RustFS Web Console, create a bucket called `juice-fs-bucket` here 
 ```
 
 ``` bash
-kubectl -n object-storage port-forward svc/postgres 5432:5432 # PostgreSQL
+kubectl --namespace object-storage port-forward svc/postgres 5432:5432 # PostgreSQL
 ```
 
-Use the RustFS console to create a bucket named `juice-fs-bucket`. You can connect a local PostgreSQL client (for example, DataGrip) to `localhost:5432` while the port-forward is running.
+Use the RustFS console to create a bucket named `juice-fs-bucket`. Use the secrets from `rustfs/secret.yaml` to log in. 
+You can connect a local PostgreSQL client like [DataGrip](https://www.jetbrains.com/datagrip/) to `localhost:5432` while the port-forward is running.
 
 ## Step 2 --- Install the JuiceFS CSI driver
 
 Add the JuiceFS Helm repository and install the CSI driver:
 
 ``` bash
-helm repo add juicefs https://juicedata.github.io/charts/
-helm repo update
-
-helm upgrade --install juicefs-csi-driver juicefs/juicefs-csi-driver \
-  --namespace kube-system --create-namespace
+helm repo add juicefs https://juicedata.github.io/charts/ && helm repo update
+helm upgrade --install juicefs-csi-driver juicefs/juicefs-csi-driver --namespace kube-system --create-namespace && sleep 5m # Give the containers time to fire up 
 ```
-
-Give Kubernetes a little time to start the controller and node
-components. Then check:
-
+Now is a good time to go grab a coffee, or respond to the unanswered email. After you are back, check 
 ``` bash
-kubectl get pods --namespace kube-system
-kubectl get csidrivers
+kubectl get pods --namespace kube-system # Expected output should show the juicefs csi controller, dashboard and node running 
+kubectl get csidrivers # Expected output should show csi.juicefs.com as a driver 
 ```
-
-You should see the JuiceFS CSI driver registered as `csi.juicefs.com`.
-
-For background on how the driver integrates with Kubernetes, see the
-[JuiceFS CSI documentation](https://juicefs.com/docs/csi/introduction/).
+For background on how the driver integrates with Kubernetes, see the [JuiceFS CSI documentation](https://juicefs.com/docs/csi/introduction/).
+### Caveat 
+CSI driver is something that requires admin privilege for the entire cluster, and it crosses specific namespace boundaries. So in a multi-tentant environment with strict RBAC tied to a namespace, you may need to sort out the required privileges. 
 
 ## Step 3 --- Configure and format the JuiceFS filesystem
 
@@ -244,8 +233,8 @@ kubectl apply --filename juice/format-job.yaml
 Check its status and logs:
 
 ``` bash
-kubectl get jobs -n object-storage
-kubectl logs -n object-storage job/<format-job-name>
+kubectl get jobs --namespace object-storage
+kubectl logs --namespace object-storage job/<format-job-name>
 ```
 
 Replace `<format-job-name>` with the Job name in `format-job.yaml`.
@@ -274,33 +263,27 @@ Once the CSI driver is registered and the filesystem has been formatted,
 apply the StorageClass and claim:
 
 ``` bash
-kubectl apply --filename juice/storageclass.yaml
-kubectl apply --filename juice/pvc.yaml
+kubectl apply --filename juice/storageclass.yaml && kubectl apply --filename juice/pvc.yaml
 ```
 
 Check that the claim is bound:
 
 ``` bash
 kubectl get storageclass
-kubectl get pvc -n object-storage
+kubectl get pvc --namespace object-storage
 kubectl get pv
 ```
 
-The PVC should reach `Bound`. The test Pods will use this claim to mount
+The PVC should read `Bound`. The test Pods will use this claim to mount
 the same JuiceFS filesystem.
 
 ## Step 5 --- Deploy the writer and reader
 
-Apply the test Pods:
+Apply the test Pods and wait for them to reach a _Running_ state.
 
 ``` bash
-kubectl apply --filename juice/test-pod.yaml
-```
-
-Wait until both Pods are running:
-
-``` bash
-kubectl get pods -n object-storage -w
+kubectl apply --filename juice/test-pods.yaml # Both pods are long living and kept alive for shell execution by user 
+kubectl get pods --namespace object-storage && sleep 2m # Wait until the reader and writer pods are Running 
 ```
 
 The manifest should define two Pods that both mount the same PVC at
@@ -397,6 +380,51 @@ A few useful distinctions:
 Good next experiments are Pod deletion and recreation (persistence),
 simultaneous writes to different files, rename/delete visibility, and
 then a multi-node Minikube test.
+
+
+## Performance Benchmarking
+
+Benchmark read and write performance using a 500 MiB binary file. The same workload is executed inside a Kubernetes pod (PVC-mounted storage) and directly from the local Ubuntu 26.04 shell.
+
+### Write
+
+Generate a 500 MiB file using random binary data and measure the time taken to flush it to storage. Run the same command (mounted directory in the write pod and any working directory in the local terminal)
+```bash
+time sh -c 'dd if=/dev/urandom of=test-500mb.bin bs=1M count=500 status=progress && sync'
+```
+
+
+### Read 
+
+Read the previously generated file and discard its contents, measuring the time taken to complete the operation, likewise the previous case, run it in the mounted directory inside the container as well as local Ubuntu terminal. 
+
+
+```bash
+time dd if=test-500mb.bin of=/dev/null bs=1M status=progress
+```
+
+### Comparison
+So, here are the numbers, and the difference is, shall we say, catastrophic? I am merely a humble application-level architect, not a storage performance engineer. Those who make a living squeezing the last few bits of throughput out of hardware can probably get much more out of this set up. 
+
+| Benchmark | Kubernetes Pod (PVC) | Local Ubuntu 26.04 | 
+|---|---:|---:
+| Write latency (500 MiB) | 5.59 s | 2 s | 
+| Write throughput (MiB/s) | 89.45 | 250 | 
+| Read latency (500 MiB) | 1.15 | 54.7 ms | 
+| Read throughput (MiB/s) | 434.8 | 9,091 | 
+
+
+
+### Benchmark Notes
+
+- File size: 500 MiB (500 × 1 MiB blocks).
+- Data source: `/dev/urandom` (random binary data).
+- Write measurements include an explicit `sync` to flush pending writes.
+- Read measurements use `/dev/null` to discard the output.
+- Run multiple iterations and compare average throughput for more representative results.
+- Read performance can be affected by filesystem and operating-system page caches. Consider testing both cold-cache and warm-cache scenarios where possible.
+- Kubernetes PVC performance may also depend on the underlying storage provisioner, filesystem, volume mount configuration and virtualization layer.
+
 
 ------------------------------------------------------------------------
 

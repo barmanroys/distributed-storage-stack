@@ -1,4 +1,4 @@
-# This pod tests the JuiceFS mount
+# These pods tests the JuiceFS mount
 apiVersion: v1
 kind: Pod
 metadata:
